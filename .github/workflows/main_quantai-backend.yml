@@ -69,11 +69,13 @@ jobs:
           print(destination_url)')
 
           if [ -z "$APP_URL" ]; then
+            echo "::warning::Could not extract App Service URL from publish profile, proceeding with deployment."
             echo "skip_deploy=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 20 "$APP_URL")
+          echo "App availability check returned HTTP status: $HTTP_STATUS"
           if [ "$HTTP_STATUS" = "403" ]; then
             echo "skip_deploy=true" >> "$GITHUB_OUTPUT"
           else
