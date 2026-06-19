@@ -74,13 +74,23 @@ jobs:
             exit 0
           fi
 
-          HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 20 "$APP_URL")
-          echo "App availability check returned HTTP status: $HTTP_STATUS"
-          if [ "$HTTP_STATUS" = "403" ]; then
-            echo "skip_deploy=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip_deploy=false" >> "$GITHUB_OUTPUT"
+          HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 20 "$APP_URL" || true)
+          if [ -z "$HTTP_STATUS" ]; then
+            HTTP_STATUS="000"
           fi
+          echo "App availability check returned HTTP status: $HTTP_STATUS"
+          case "$HTTP_STATUS" in
+            403)
+              echo "skip_deploy=true" >> "$GITHUB_OUTPUT"
+              ;;
+            000|5??)
+              echo "::warning::App availability check failed (HTTP $HTTP_STATUS), proceeding with deployment."
+              echo "skip_deploy=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "skip_deploy=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
       
       - name: 'Deploy to Azure Web App'
         if: steps.app-availability.outputs.skip_deploy != 'true'
