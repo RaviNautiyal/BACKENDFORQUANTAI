@@ -56,11 +56,60 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: python-app
+
+      - name: Check target app availability
+        id: app-availability
+        env:
+          PUBLISH_PROFILE: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_15CBF3A6185D4E9D95F8320C36F9F844 }}
+        run: |
+          APP_URL=$(printf '%s' "$PUBLISH_PROFILE" | sed -n 's/.*destinationAppUrl="\([^"]*\)".*/\1/p' | head -n 1)
+
+          if [[ "$APP_URL" =~ ^http:// ]]; then
+            APP_URL="https://${APP_URL#http://}"
+          elif [[ ! "$APP_URL" =~ ^https:// ]]; then
+            APP_URL="https://$APP_URL"
+          fi
+
+          if [ -z "$APP_URL" ]; then
+            echo "::warning::Could not extract App Service URL from publish profile, proceeding with deployment."
+            echo "skip_deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ ! "$APP_URL" =~ ^https://[A-Za-z0-9._-]+(:[0-9]+)?(/[^[:space:]]*)?$ ]]; then
+            echo "::warning::Invalid App Service URL format extracted from publish profile, proceeding with deployment."
+            echo "skip_deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          set +e
+          HTTP_STATUS=$(curl -L --max-redirs 5 -sS -o /dev/null -w "%{http_code}" --max-time 20 --url "$APP_URL")
+          CURL_EXIT_CODE=$?
+          set -e
+          if [ "$CURL_EXIT_CODE" -ne 0 ] || [ -z "$HTTP_STATUS" ]; then
+            HTTP_STATUS="000"
+            echo "::warning::App availability check request failed (curl exit code $CURL_EXIT_CODE), proceeding with deployment."
+          fi
+          echo "App availability check returned HTTP status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" = "403" ]; then
+            echo "::warning::Target app responded with HTTP 403 (disabled), skipping deployment."
+            echo "skip_deploy=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$HTTP_STATUS" =~ ^5[0-9]{2}$ ]]; then
+            echo "::warning::App availability check reached the app but got server error HTTP $HTTP_STATUS, proceeding with deployment."
+            echo "skip_deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
       
       - name: 'Deploy to Azure Web App'
+        if: steps.app-availability.outputs.skip_deploy != 'true'
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
         with:
           app-name: 'quantai-backend'
           slot-name: 'Production'
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_15CBF3A6185D4E9D95F8320C36F9F844 }}
+
+      - name: Deployment skipped because app is disabled
+        if: steps.app-availability.outputs.skip_deploy == 'true'
+        run: echo "::warning::Skipping deployment because the target Azure App Service is disabled (HTTP 403). Re-enable the app service and rerun this workflow."
