@@ -62,11 +62,13 @@ jobs:
         env:
           PUBLISH_PROFILE: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_15CBF3A6185D4E9D95F8320C36F9F844 }}
         run: |
-          APP_URL=$(python -c 'import os, xml.etree.ElementTree as ET; profile_xml=os.environ.get("PUBLISH_PROFILE",""); destination_url=""; \
-          root=ET.fromstring(profile_xml) if profile_xml else None; profile=root.find(".//publishProfile") if root is not None else None; \
-          destination_url=(profile.attrib.get("destinationAppUrl") if profile is not None else "") or ""; \
-          destination_url=(f"https://{destination_url}" if destination_url and not destination_url.startswith(("http://","https://")) else destination_url); \
-          print(destination_url)')
+          APP_URL=$(printf '%s' "$PUBLISH_PROFILE" | sed -n 's/.*destinationAppUrl="\([^"]*\)".*/\1/p' | head -n 1)
+
+          if [[ "$APP_URL" =~ ^http:// ]]; then
+            APP_URL="https://${APP_URL#http://}"
+          elif [[ ! "$APP_URL" =~ ^https:// ]]; then
+            APP_URL="https://$APP_URL"
+          fi
 
           if [ -z "$APP_URL" ]; then
             echo "::warning::Could not extract App Service URL from publish profile, proceeding with deployment."
@@ -74,7 +76,7 @@ jobs:
             exit 0
           fi
 
-          if [[ ! "$APP_URL" =~ ^https?://[A-Za-z0-9._:/-]+$ ]]; then
+          if [[ ! "$APP_URL" =~ ^https://[^[:space:]]+$ ]]; then
             echo "::warning::Invalid App Service URL format extracted from publish profile, proceeding with deployment."
             echo "skip_deploy=false" >> "$GITHUB_OUTPUT"
             exit 0
